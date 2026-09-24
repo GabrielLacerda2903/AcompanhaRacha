@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#12315e">
+<title>Sorteio AcompanhaRacha v1</title>
+<style>
+:root{--bg:#eef1f5;--card:#fff;--tx:#14171f;--mut:#667085;--bd:#d9dee7;--a:#1553b8;--b:#d9480f;--ok:#178a45;--dn:#c92a2a;--pri:#12315e}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#181d26;--tx:#eef0f4;--mut:#9aa3b5;--bd:#2a3140;--a:#5b9bff;--b:#ff8f5c;--ok:#4cc27a;--dn:#ff6b6b;--pri:#5b9bff}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:12px 12px 84px;max-width:680px;margin-inline:auto}
+h2{font-size:18px;margin:18px 0 8px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+.btn{font:inherit;font-weight:600;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:10px;padding:12px 14px;min-height:46px;cursor:pointer}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.4}
+.pri{background:var(--pri);color:#fff;border-color:var(--pri)}
+.dn{color:var(--dn)}
+.sm{padding:6px 10px;min-height:34px;font-size:14px}
+input[type=text],input[type=number],input[type=file],select{font:inherit;width:100%;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--card);color:var(--tx)}
+input[type=range]{width:100%}
+input[type=checkbox]{width:18px;height:18px}
+.row{display:flex;gap:8px;align-items:center}
+.row>*{flex:1}
+.row>.btn.sm,.row>.fit{flex:none}
+.mut{color:var(--mut);font-size:14px}
+.xs{font-size:12px}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--card);border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;font:inherit;font-size:12px;border:0;background:none;color:var(--mut);padding:9px 0 8px;cursor:pointer}
+nav button b{display:block;font-size:20px;font-weight:400}
+nav button.on{color:var(--pri);font-weight:700}
+.li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--bd)}
+.li:last-child{border:0}
+.li .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--bd);background:var(--bg);margin:3px;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{padding:7px 4px;text-align:center;border-bottom:1px solid var(--bd)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mut);font-weight:600;font-size:13px}
+.wrap{overflow-x:auto}
+.blur{filter:blur(6px);user-select:none}
+.count{font-weight:700}
+.count.bad{color:var(--dn)}
+.count.ok{color:var(--ok)}
+.team{border:2px solid var(--bd);border-radius:12px;padding:10px;margin-bottom:8px}
+.team h3{margin:0 0 6px;font-size:15px}
+.res{border:1px solid var(--bd);border-radius:14px;padding:12px;margin-bottom:14px}
+.badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--bg);color:var(--mut);margin-left:6px}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<nav id="nav"></nav>
+<input type="file" id="imp" accept=".json,application/json" multiple hidden>
+<script>
+const KEY='sorteio1_v1';
+let db={players:[],lineups:[],days:{},manual:{},avail:{},cfg:{perTeam:4,useNotes:true,pesoAtk:60,janela:4,pesoRecente:2}};
+let tab='sort',plQ='',absQ='',absOpen=false,cfgEdit=false,notasShown=false,results=null,resultsErr='',impMsg='',mergeSel=null;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){alert('Não foi possível salvar os dados neste navegador.')}}
+function load(){try{const r=localStorage.getItem(KEY);if(r)db=Object.assign(db,JSON.parse(r))}catch(e){}db.cfg=Object.assign({perTeam:4,useNotes:true,pesoAtk:60,janela:4,pesoRecente:2},db.cfg);delete db.cfg.teams;db.manual=db.manual||{};db.avail=db.avail||{}}
+
+// ---------- importação e mescla dos arquivos do AcompanhaRacha ----------
+function activePl(){return db.players.filter(p=>!p.off).sort((x,y)=>x.name.localeCompare(y.name,'pt-BR'))}
+function findByName(n){n=n.trim().toLowerCase();return db.players.find(p=>p.name.trim().toLowerCase()===n)}
+function upsertPlayers(list){
+  (list||[]).forEach(p=>{
+    const byId=db.players.find(x=>x.id===p.id);
+    if(byId){Object.assign(byId,p);return}
+    const byName=findByName(p.name);
+    if(byName&&byName.local&&byName.id!==p.id){
+      // jogador criado à mão aqui e agora chegou "oficialmente" do app principal: adota o novo id
+      if(db.manual[byName.id]!=null){db.manual[p.id]=db.manual[byName.id];delete db.manual[byName.id]}
+      if(db.avail[byName.id]){db.avail[p.id]=true;delete db.avail[byName.id]}
+      db.players=db.players.filter(x=>x.id!==byName.id);
+      db.players.push({...p});
+    }else db.players.push({...p});
+  });
+}
+function upsertLineups(list){(list||[]).forEach(l=>{const i=db.lineups.findIndex(x=>x.id===l.id);i<0?db.lineups.push(l):db.lineups[i]=l})}
+const normName=n=>n.normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
+function possibleDupes(){
+  const groups={};
+  activePl().forEach(p=>{const k=normName(p.name);(groups[k]=groups[k]||[]).push(p)});
+  const out=[];
+  Object.values(groups).forEach(g=>{for(let i=0;i<g.length;i++)for(let j=i+1;j<g.length;j++)out.push([g[i],g[j]])});
+  return out;
+}
+// mescla dropId em keepId: atualiza notas manuais, presença, composições (e as unifica quando ficam iguais) e eventos das partidas
+function mergePlayers(keep,drop){
+  if(keep===drop)return;
+  if(db.manual[keep]==null&&db.manual[drop]!=null)db.manual[keep]=db.manual[drop];
+  delete db.manual[drop];
+  if(db.avail[drop])db.avail[keep]=true;
+  delete db.avail[drop];
+  db.lineups.forEach(l=>{if(l.pids.includes(drop))l.pids=[...new Set(l.pids.map(x=>x===drop?keep:x))].sort()});
+  const byKey={};
+  db.lineups.forEach(l=>{const k=l.pids.join(',');(byKey[k]=byKey[k]||[]).push(l)});
+  const idMap={},kept=[];
+  Object.values(byKey).forEach(group=>{
+    const canon=group.reduce((a,b)=>a.num<=b.num?a:b);
+    group.forEach(l=>idMap[l.id]=canon.id);
+    kept.push(canon);
+  });
+  db.lineups=kept;
+  Object.values(db.days).forEach(day=>(day.matches||[]).forEach(m=>{
+    if(idMap[m.a])m.a=idMap[m.a];
+    if(idMap[m.b])m.b=idMap[m.b];
+    (m.ev||[]).forEach(e=>{if(e.p===drop)e.p=keep;if(e.ep===drop)e.ep=keep});
+  }));
+  db.players=db.players.filter(p=>p.id!==drop);
+}
+function mergeDays(days){
+  Object.keys(days||{}).forEach(d=>{
+    const inc=days[d],cur=db.days[d]||{date:d,present:[],matches:[]};
+    (inc.matches||[]).forEach(m=>{const i=cur.matches.findIndex(x=>x.id===m.id);i<0?cur.matches.push(m):cur.matches[i]=m});
+    cur.present=[...new Set([...(cur.present||[]),...(inc.present||[])])];
+    db.days[d]=cur;
+  });
+}
+function normImport(o){
+  const t=o.tipo||(Array.isArray(o.matches)&&Array.isArray(o.players)?'legado':'');
+  if(t==='tudo')return{players:o.players,lineups:o.lineups,days:o.days||{}};
+  if(t==='dia')return{players:[],lineups:[],days:{[o.date]:o}};
+  if(t==='jogadores')return{players:o.players,lineups:[],days:{}};
+  if(t==='composicoes')return{players:[],lineups:o.lineups,days:{}};
+  if(t==='legado'){
+    const days={};
+    (o.matches||[]).forEach(m=>{const d=m.day||'sem-data';(days[d]=days[d]||{date:d,present:[],matches:[]}).matches.push(m)});
+    return{players:o.players,lineups:o.lineups,days};
+  }
+  throw new Error('arquivo não reconhecido');
+}
+function importOne(o){const n=normImport(o);upsertPlayers(n.players);upsertLineups(n.lineups);mergeDays(n.days)}
+
+// ---------- cálculo das notas ----------
+function allMatches(){const out=[];Object.keys(db.days).forEach(d=>(db.days[d].matches||[]).forEach(m=>out.push({date:d,m})));return out}
+function recentDates(){const ds=[...new Set(allMatches().map(x=>x.date))].sort();return new Set(ds.slice(-Math.max(0,db.cfg.janela)))}
+function rawStats(){
+  const rec=recentDates(),st={};
+  const g=id=>st[id]||(st[id]={rallies:0,pontos:0,erAtq:0,defNum:0,defDen:0});
+  allMatches().forEach(({date,m})=>{
+    const rallies=(m.ev||[]).length;if(!rallies)return;
+    const La=db.lineups.find(l=>l.id===m.a),Lb=db.lineups.find(l=>l.id===m.b);
+    if(!La||!Lb)return;
+    const w=rec.has(date)?db.cfg.pesoRecente:1;
+    let proA=0,proB=0;
+    m.ev.forEach(e=>{if(!e.err){if(e.t==='a')proA++;else proB++}});
+    const defA=rallies-proB,defB=rallies-proA;
+    La.pids.forEach(pid=>{const s=g(pid);s.rallies+=w*rallies;s.defNum+=w*defA;s.defDen+=w*rallies});
+    Lb.pids.forEach(pid=>{const s=g(pid);s.rallies+=w*rallies;s.defNum+=w*defB;s.defDen+=w*rallies});
+    m.ev.forEach(e=>{
+      if(!e.err&&e.p){g(e.p).pontos+=w}
+      if(e.err&&e.k==='atq'&&e.ep){g(e.ep).erAtq+=w}
+    });
+  });
+  const out={};
+  Object.keys(st).forEach(id=>{const s=st[id];out[id]={rallies:s.rallies,atk:s.rallies?(s.pontos-s.erAtq)/s.rallies:null,def:s.defDen?s.defNum/s.defDen:null}});
+  return out;
+}
+function stdev(arr,mean){if(arr.length<2)return 0;const v=arr.reduce((a,x)=>a+(x-mean)**2,0)/arr.length;return Math.sqrt(v)}
+function computeScores(){
+  const raw=rawStats(),ids=activePl().map(p=>p.id);
+  const withData=ids.filter(id=>raw[id]&&raw[id].rallies>0);
+  const meanAtk=withData.length?withData.reduce((a,id)=>a+raw[id].atk,0)/withData.length:0;
+  const meanDef=withData.length?withData.reduce((a,id)=>a+raw[id].def,0)/withData.length:0;
+  const sdAtk=stdev(withData.map(id=>raw[id].atk),meanAtk)||1;
+  const sdDef=stdev(withData.map(id=>raw[id].def),meanDef)||1;
+  const out={};
+  ids.forEach(id=>{
+    const hasData=!!(raw[id]&&raw[id].rallies>0);
+    const zA=hasData?(raw[id].atk-meanAtk)/sdAtk:(db.manual[id]!=null?db.manual[id]:0);
+    const zD=hasData?(raw[id].def-meanDef)/sdDef:(db.manual[id]!=null?db.manual[id]:0);
+    out[id]={hasData,rallies:hasData?raw[id].rallies:0,atk:hasData?raw[id].atk:null,def:hasData?raw[id].def:null,zA,zD,
+      origem:hasData?'Calculada':(db.manual[id]!=null?'Estimativa manual':'Média (sem dado)')};
+  });
+  return out;
+}
+const combined=(sc,id)=>{const p=db.cfg.pesoAtk/100;return p*sc[id].zA+(1-p)*sc[id].zD};
+
+// ---------- sorteio dos times ----------
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+function balanceMetric(teamsArr,val){const sums=teamsArr.map(t=>t.reduce((a,id)=>a+val(id),0));return{sums,diff:Math.max(...sums)-Math.min(...sums)}}
+function hillClimb(teamsArr,val,iters){
+  let cur=teamsArr.map(t=>t.slice()),best=balanceMetric(cur,val).diff;
+  for(let i=0;i<iters;i++){
+    const ta=Math.floor(Math.random()*cur.length),tb=Math.floor(Math.random()*cur.length);
+    if(ta===tb||!cur[ta].length||!cur[tb].length)continue;
+    const ia=Math.floor(Math.random()*cur[ta].length),ib=Math.floor(Math.random()*cur[tb].length);
+    [cur[ta][ia],cur[tb][ib]]=[cur[tb][ib],cur[ta][ia]];
+    const d=balanceMetric(cur,val).diff;
+    if(d<=best)best=d;else [cur[ta][ia],cur[tb][ib]]=[cur[tb][ib],cur[ta][ia]];
+  }
+  return{teams:cur,...balanceMetric(cur,val)};
+}
+function teamSizes(n,perTeam){
+  if(n<=0)return[];
+  const teams=Math.ceil(n/perTeam),sizes=[];
+  for(let i=0;i<teams;i++)sizes.push(i<teams-1?perTeam:n-perTeam*(teams-1));
+  return sizes;
+}
+// preenche por rodadas em zigue-zague, respeitando a capacidade de cada time (o(s) último(s) pode(m) ficar menor(es))
+function capacityDraft(order,sizes){
+  const T=sizes.map(()=>[]),full=Math.max(...sizes,0);
+  let qi=0;
+  for(let round=0;round<full&&qi<order.length;round++){
+    const seq=round%2===0?sizes.map((_,i)=>i):sizes.map((_,i)=>i).reverse();
+    for(const t of seq){if(qi<order.length&&T[t].length===round&&T[t].length<sizes[t])T[t].push(order[qi++])}
+  }
+  return T;
+}
+function draft(ids,sizes,useNotes,sc){
+  if(!useNotes){
+    const order=shuffle(ids);
+    return{teams:capacityDraft(order,sizes),sums:null,diff:null};
+  }
+  const val=id=>combined(sc,id);
+  const order=ids.slice().sort((x,y)=>val(y)-val(x));
+  const base=capacityDraft(order,sizes);
+  let best=null;
+  for(let k=0;k<1;k++){const r=hillClimb(base,val,1500);if(!best||r.diff<best.diff)best=r}
+  return best;
+}
+
+// ---------- telas ----------
+function fday(d){const[y,m,x]=d.split('-');return x+'/'+m+'/'+y}
+function cfgSummary(c){
+  const base=`${c.perTeam} jogador(es) por time`;
+  if(!c.useNotes)return `${base} · sorteio aleatório, sem usar as notas`;
+  return `${base} · usa as notas · ataque ${c.pesoAtk}% / defesa ${100-c.pesoAtk}% · últimos ${c.janela} dia(s) com peso ${c.pesoRecente}×`;
+}
+function cfgBody(c){
+  return `<div class="row"><span><b>Jogadores por time</b></span><input type="number" id="cPerTeam" min="1" max="12" value="${c.perTeam}" style="max-width:90px"></div>
+  <div class="row" style="margin-top:10px"><label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" id="cUse"${c.useNotes?' checked':''}><span>Usar as notas dos jogadores para equilibrar</span></label></div>
+  ${c.useNotes?`<div style="margin-top:10px"><div class="mut">Peso do ataque: ${c.pesoAtk}% · Defesa: ${100-c.pesoAtk}%</div><input type="range" id="cPeso" min="0" max="100" step="5" value="${c.pesoAtk}"></div>
+  <div class="row" style="margin-top:12px"><div class="mut xs">Dias recentes que pesam mais</div><input type="number" id="cJan" min="0" max="20" value="${c.janela}" style="max-width:90px"></div>
+  <div class="row" style="margin-top:8px"><div class="mut xs">Quanto pesam a mais (1 = peso normal)</div><input type="number" id="cPesoR" min="1" max="10" step="0.5" value="${c.pesoRecente}" style="max-width:90px"></div>`:''}
+  <p class="mut xs" style="margin:10px 0 0">Vale para os próximos sorteios; não muda os que já foram feitos.</p>`;
+}
+function absRows(){
+  const q=absQ.trim().toLowerCase();
+  return activePl().filter(p=>!db.avail[p.id]&&p.name.toLowerCase().includes(q))
+    .map(p=>`<div class="li"><span class="nm">${esc(p.name)}</span><button class="btn sm fit" data-act="pres" data-id="${p.id}">Presente</button></div>`).join('')
+    ||'<p class="mut">Nenhum jogador ausente encontrado.</p>';
+}
+function vSort(){
+  const c=db.cfg,all=activePl(),pr=all.filter(p=>db.avail[p.id]),n=pr.length,sizes=teamSizes(n,c.perTeam);
+  return `<div class="card"><div class="mut">${n?`Presentes: ${n} · Times a formar: ${sizes.join(' + ')} jogador(es)`:'Marque quem está presente para sortear.'}</div></div>
+  <button class="btn pri" style="width:100%" data-act="draw"${n?'':' disabled'}>${n?'Sortear times':'Marque os jogadores presentes'}</button>
+  ${resultsErr?`<p class="dn">${esc(resultsErr)}</p>`:''}
+  ${results?vResults():''}
+  <h2>Presentes hoje (${n})</h2>
+  <div class="card"><div class="row"><input type="text" id="nq" placeholder="Novo jogador (entra como presente)" maxlength="30"><button class="btn fit" data-act="newPres">Adicionar</button></div>
+  ${pr.map(p=>`<div class="li"><span class="nm">${esc(p.name)}</span><button class="btn sm dn" data-act="abs" data-id="${p.id}" title="Marcar como ausente">✕</button></div>`).join('')||'<p class="mut" style="margin:10px 0 0">Ninguém marcado como presente. Abra a lista de ausentes abaixo.</p>'}</div>
+  <h2>Ausentes (${all.length-n})</h2>
+  <div class="card"><div class="row"><button class="btn sm fit" data-act="togAbs">${absOpen?'Ocultar':'Mostrar'}</button></div>
+  ${absOpen?`<input type="text" id="qav" placeholder="Buscar jogador" value="${esc(absQ)}" style="margin-top:8px"><div id="absList">${absRows()}</div>`:''}
+  ${!all.length?'<p class="mut" style="margin:10px 0 0">Nenhum jogador ainda. Importe os dados na aba Dados ou cadastre alguém na aba Jogadores.</p>':''}</div>
+  <h2>Configurações</h2>
+  <div class="card"><div class="row"><div><b>Sorteio</b><div class="mut">${esc(cfgSummary(c))}</div></div><button class="btn sm fit" data-act="cfgEdit">${cfgEdit?'Concluir':'Alterar'}</button></div>
+  ${cfgEdit?cfgBody(c):''}</div>`;
+}
+function vResults(){
+  const r=results;
+  return `<div class="res">${r.diff!=null?`<div class="mut" style="margin-bottom:8px">Diferença de nível entre os times: ${r.diff.toFixed(2)}</div>`:''}
+  ${r.teams.map((t,ti)=>`<div class="team"><h3>Time ${ti+1}${r.sums?` <span class="mut xs">(${r.sums[ti].toFixed(2)})</span>`:''}</h3>${t.map(id=>`<span class="chip">${esc((db.players.find(p=>p.id===id)||{}).name||'?')}</span>`).join('')}</div>`).join('')}
+  </div><button class="btn" style="width:100%" data-act="draw">Sortear de novo</button>`;
+}
+
+function vJog(){
+  const all=activePl(),sc=computeScores(),dupes=possibleDupes();
+  return `<h2>Jogadores (${all.length})</h2>
+  <div class="card"><div class="row"><input type="text" id="np" placeholder="Nome do novo jogador" maxlength="30"><button class="btn pri fit" data-act="addPl">Adicionar</button></div>
+  <p class="mut xs" style="margin:8px 0 0">Um jogador novo pode ganhar uma nota estimada abaixo, usada só até ele ter partidas registradas — depois disso a nota passa a ser calculada como a dos outros.</p></div>
+  ${vMerge(dupes)}
+  <div class="card"><input type="text" id="q2" placeholder="Buscar jogador" value="${esc(plQ)}"></div>
+  <div class="card" id="plist">${plRows(sc)}</div>`;
+}
+function vMerge(dupes){
+  if(mergeSel){
+    const a=db.players.find(p=>p.id===mergeSel.a),b=db.players.find(p=>p.id===mergeSel.b);
+    if(!a||!b){mergeSel=null;return ''}
+    return `<h2>Mesclar jogadores</h2><div class="card"><p class="mut" style="margin-top:0">Confirma que <b>${esc(a.name)}</b> e <b>${esc(b.name)}</b> são a mesma pessoa? As partidas, composições e notas das duas entradas passam a valer para uma só. Não é possível desfazer, exceto restaurando um backup anterior.</p>
+    <div class="row"><button class="btn" data-act="mergeGo" data-keep="a">Manter nome "${esc(a.name)}"</button><button class="btn" data-act="mergeGo" data-keep="b">Manter nome "${esc(b.name)}"</button></div>
+    <button class="btn" style="width:100%;margin-top:8px" data-act="mergeCancel">Cancelar</button></div>`;
+  }
+  const all=activePl();
+  const dupCard=dupes.length?`<div class="card"><b>Possíveis duplicados</b><p class="mut" style="margin:4px 0 10px">Mesmo nome em jogadores diferentes — provavelmente a mesma pessoa importada de dois aparelhos.</p>
+    ${dupes.map(([a,b])=>`<div class="li"><span class="nm">${esc(a.name)}</span><button class="btn sm fit" data-act="mergeAsk" data-a="${a.id}" data-b="${b.id}">Mesclar</button></div>`).join('')}</div>`:'';
+  const manualCard=all.length>=2?`<div class="card"><b>Mesclar dois jogadores</b><p class="mut" style="margin:4px 0 10px">Use se a mesma pessoa está cadastrada com nomes diferentes (por exemplo, um apelido).</p>
+    <div class="row"><select id="mgA">${all.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select><select id="mgB">${all.map((p,i)=>`<option value="${p.id}"${i===1?' selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+    <button class="btn" style="width:100%;margin-top:8px" data-act="mergeAskSel">Selecionar para mesclar</button></div>`:'';
+  return dupCard+manualCard;
+}
+function plRows(sc){
+  const q=plQ.trim().toLowerCase();
+  return activePl().filter(p=>p.name.toLowerCase().includes(q)).map(p=>{
+    const s=sc[p.id]||{hasData:false};
+    const manualCtl=s.hasData?'<span class="mut xs">Nota calculada a partir das partidas</span>':
+      `<div class="row" style="margin-top:6px"><span class="mut xs" style="flex:none">Nota estimada</span><input type="range" min="-2" max="2" step="0.25" value="${db.manual[p.id]!=null?db.manual[p.id]:0}" data-act="manual" data-id="${p.id}"><span class="mut xs" style="flex:none;width:70px;text-align:right">${db.manual[p.id]!=null?(db.manual[p.id]>0?'+':'')+db.manual[p.id].toFixed(2):'média'}</span></div>`;
+    return `<div class="li" style="display:block"><div class="row"><span class="nm">${esc(p.name)}</span><span class="row fit"><button class="btn sm" data-act="renPl" data-id="${p.id}">Renomear</button><button class="btn sm dn" data-act="delPl" data-id="${p.id}">Remover</button></span></div>${manualCtl}</div>`;
+  }).join('')||'<p class="mut" style="margin:0">Nenhum jogador encontrado.</p>';
+}
+
+function vNotas(){
+  const sc=computeScores(),ids=activePl().map(p=>p.id).sort((a,b)=>combined(sc,b)-combined(sc,a));
+  const cls=notasShown?'':'blur';
+  return `<h2>Notas dos jogadores</h2>
+  <div class="card"><p class="mut" style="margin-top:0">Fica numa aba separada de propósito — as notas só aparecem depois de tocar no botão abaixo.</p>
+  <button class="btn pri" style="width:100%" data-act="toggleNotas">${notasShown?'Ocultar notas':'Mostrar notas'}</button></div>
+  <div class="card wrap"><table><tr><th>Jogador</th><th>Amostra</th><th>Ataque</th><th>Defesa</th><th>Nota</th><th>Origem</th></tr>
+  ${ids.map(id=>{const s=sc[id];return `<tr class="${cls}"><td>${esc((db.players.find(p=>p.id===id)||{}).name)}</td><td>${s.rallies||'—'}</td><td>${s.atk!=null?s.atk.toFixed(2):'—'}</td><td>${s.def!=null?s.def.toFixed(2):'—'}</td><td><b>${combined(sc,id).toFixed(2)}</b></td><td class="xs">${s.origem}</td></tr>`}).join('')||`<tr><td colspan="6" class="mut">Sem jogadores.</td></tr>`}</table></div>
+  <p class="mut xs">Ataque e defesa são taxas por rally (quanto maior, melhor as duas). Nota é a combinação das duas, comparada com a média do grupo: 0 é a média, acima é melhor que a média.</p>`;
+}
+
+function vDados(){
+  const nd=Object.keys(db.days).length,nm=allMatches().length;
+  return `<h2>Dados importados</h2>
+  <div class="card"><table style="font-size:15px"><tr><td>Jogadores</td><td style="text-align:right"><b>${db.players.length}</b></td></tr>
+  <tr><td>Composições</td><td style="text-align:right"><b>${db.lineups.length}</b></td></tr>
+  <tr><td>Dias de racha</td><td style="text-align:right"><b>${nd}</b></td></tr>
+  <tr><td>Partidas</td><td style="text-align:right"><b>${nm}</b></td></tr></table></div>
+  <div class="card"><p class="mut" style="margin-top:0">Importe os arquivos exportados pelo AcompanhaRacha (aba Estatísticas → Arquivos e backup). O mais prático é usar "Exportar tudo"; dá para importar vários arquivos de uma vez, inclusive de dias diferentes — eles se somam, não se substituem.</p>
+  <button class="btn pri" style="width:100%" data-act="import">Importar arquivo(s)</button>
+  ${impMsg?`<p class="mut" style="margin-bottom:0">${esc(impMsg)}</p>`:''}</div>
+  <div class="card"><b>Backup deste sorteador</b><p class="mut" style="margin:4px 0 10px">Guarda os dados importados, os jogadores criados aqui e as configurações, tudo neste navegador. Exporte de vez em quando.</p>
+  <div class="row"><button class="btn" data-act="export">Exportar backup</button><button class="btn dn" data-act="reset">Apagar tudo</button></div></div>`;
+}
+
+function render(){
+  $('#app').innerHTML={sort:vSort,jog:vJog,notas:vNotas,dados:vDados}[tab]();
+  $('#nav').innerHTML=[['sort','🎲','Sorteio'],['jog','👥','Jogadores'],['notas','📊','Notas'],['dados','📁','Dados']]
+    .map(([k,i,l])=>`<button class="${tab===k?'on':''}" data-act="tab" data-v="${k}"><b>${i}</b>${l}</button>`).join('');
+}
+
+const dupName=n=>activePl().some(p=>p.name.toLowerCase()===n.toLowerCase());
+const act={
+  tab(d){tab=d.v;if(tab!=='notas')notasShown=false;if(tab!=='jog')mergeSel=null;results=null;resultsErr='';render();scrollTo(0,0)},
+  cfgEdit(){cfgEdit=!cfgEdit;render()},
+  pres(d){db.avail[d.id]=true;save();render()},
+  abs(d){delete db.avail[d.id];save();render()},
+  togAbs(){absOpen=!absOpen;render()},
+  newPres(){
+    const n=$('#nq').value.trim();if(!n)return;
+    if(dupName(n)){alert('Já existe um jogador com esse nome.');return}
+    const id=uid();db.players.push({id,name:n,local:true});db.avail[id]=true;save();render();$('#nq').focus();
+  },
+  draw(){
+    const c=db.cfg,all=activePl(),sel=all.filter(p=>db.avail[p.id]).map(p=>p.id);
+    if(!sel.length){resultsErr='Marque pelo menos um jogador presente.';results=null;render();return}
+    resultsErr='';
+    const sc=computeScores(),sizes=teamSizes(sel.length,c.perTeam);
+    results=draft(sel,sizes,c.useNotes,sc);
+    render();
+  },
+  addPl(){
+    const n=$('#np').value.trim();if(!n)return;
+    if(dupName(n)){alert('Já existe um jogador com esse nome.');return}
+    db.players.push({id:uid(),name:n,local:true});save();render();$('#np').focus();
+  },
+  renPl(d){const p=db.players.find(x=>x.id===d.id);const n=(prompt('Novo nome do jogador:',p.name)||'').trim();if(!n)return;p.name=n;save();render()},
+  delPl(d){if(!confirm('Remover este jogador da lista?'))return;db.players.find(x=>x.id===d.id).off=true;save();render()},
+  mergeAsk(d){mergeSel={a:d.a,b:d.b};render()},
+  mergeAskSel(){
+    const a=$('#mgA').value,b=$('#mgB').value;
+    if(a===b){alert('Escolha dois jogadores diferentes.');return}
+    mergeSel={a,b};render();
+  },
+  mergeGo(d){
+    const keep=d.keep==='a'?mergeSel.a:mergeSel.b,drop=d.keep==='a'?mergeSel.b:mergeSel.a;
+    mergePlayers(keep,drop);mergeSel=null;save();render();
+  },
+  mergeCancel(){mergeSel=null;render()},
+  toggleNotas(){notasShown=!notasShown;render()},
+  import(){$('#imp').click()},
+  export(){
+    const b=new Blob([JSON.stringify(db)],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(b);
+    a.download='sorteio-backup-'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a);a.click();a.remove();
+  },
+  reset(){if(!confirm('Apagar todos os dados deste sorteador (jogadores, composições, dias e configurações)? Isso não afeta o AcompanhaRacha.'))return;db={players:[],lineups:[],days:{},manual:{},avail:{},cfg:db.cfg};save();render()}
+};
+
+document.addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(b&&act[b.dataset.act])act[b.dataset.act](b.dataset)});
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Enter')return;
+  if(e.target.id==='np')act.addPl();
+});
+document.addEventListener('input',e=>{
+  const id=e.target.id;
+  if(id==='qav'){absQ=e.target.value;const t=$('#absList');if(t)t.innerHTML=absRows()}
+  if(id==='q2'){plQ=e.target.value;const t=$('#plist');if(t)t.innerHTML=plRows(computeScores())}
+  if(id==='cPeso'){db.cfg.pesoAtk=Number(e.target.value);save();render()}
+  if(e.target.dataset&&e.target.dataset.act==='manual'){
+    db.manual[e.target.dataset.id]=Number(e.target.value);save();
+    const row=e.target.closest('.li');if(row)row.querySelector('span.mut.xs:last-child').textContent=(Number(e.target.value)>0?'+':'')+Number(e.target.value).toFixed(2);
+  }
+});
+document.addEventListener('change',e=>{
+  const id=e.target.id;
+  if(id==='cPerTeam'){db.cfg.perTeam=Math.max(1,Number(e.target.value)||1);save();render()}
+  if(id==='cUse'){db.cfg.useNotes=e.target.checked;save();render()}
+  if(id==='cJan'){db.cfg.janela=Math.max(0,Number(e.target.value)||0);save();render()}
+  if(id==='cPesoR'){db.cfg.pesoRecente=Math.max(1,Number(e.target.value)||1);save();render()}
+});
+$('#imp').addEventListener('change',e=>{
+  const files=[...e.target.files];if(!files.length)return;
+  let ok=0,fail=[];
+  Promise.all(files.map(f=>f.text().then(t=>{
+    try{importOne(JSON.parse(t));ok++}catch(x){fail.push(f.name)}
+  }))).then(()=>{
+    save();impMsg=ok+' arquivo(s) importado(s)'+(fail.length?'; não reconhecido(s): '+fail.join(', '):'.');
+    render();
+  });
+  e.target.value='';
+});
+
+load();render();
+</script>
+</body>
+</html>
